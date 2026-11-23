@@ -255,6 +255,7 @@ function switchScene(k){
 }
 
 function updateStats(){
+  const head = document.getElementById('tblHead');
   const cur = D[mode];
   document.getElementById('sNodes').textContent = cur.nodes.length;
   document.getElementById('sLen').textContent = cur.length.toFixed(3) + ' m';
@@ -277,7 +278,6 @@ function updateStats(){
   if (!cur.actions.length && !D.learned_policy) {
     tb.innerHTML = '<tr><td colspan="4" style="color:#8b95a9">（无动作）</td></tr>';
   }
-  const head = document.getElementById('tblHead');
   if (D.learned_policy) {
     head.style.display = 'none';
     tb.innerHTML = '<tr><th style="color:#8b95a9">状态</th><th style="color:#8b95a9">学到的动作</th><th style="color:#8b95a9">Q</th></tr>'
