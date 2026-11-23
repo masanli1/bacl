@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>路径求解 · 3D 查看器</title>
+<style>
+:root{--bg:#0b0d11;--panel:#12151c;--line:#232937;--text:#e8ecf3;--muted:#8b95a9;--accent:#3b82f6}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(900px 420px at 50% -80px,#16213a,transparent 60%),var(--bg);
+color:var(--text);font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:26px 18px 40px}
+h1{font-size:22px;margin:0 0 6px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 16px}
+.row{display:grid;grid-template-columns:1fr 300px;gap:16px}
+@media(max-width:900px){.row{grid-template-columns:1fr}}
+#cv{width:100%;height:560px;display:block;background:#0e1116;border:1px solid var(--line);border-radius:12px;cursor:grab}
+#cv.drag{cursor:grabbing}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.panel h2{font-size:13px;margin:0 0 10px;color:var(--muted);font-weight:600}
+button{background:#1a2029;color:var(--text);border:1px solid var(--line);border-radius:8px;
+padding:7px 12px;font-size:13px;cursor:pointer;margin:0 6px 8px 0}
+button:hover{border-color:var(--accent)}
+button.on{background:#16213a;border-color:var(--accent)}
+input[type=range]{width:100%;margin:6px 0}
+.stat{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed #1c222d}
+.stat b{font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+th,td{padding:4px 6px;text-align:left;border-bottom:1px solid #171c26;font-variant-numeric:tabular-nums}
+th{color:var(--muted);font-weight:500}
+.hint{color:var(--muted);font-size:12px;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>三段式路径求解 · 3D 查看器</h1>
+  <p class="sub">鼠标拖拽旋转 · 滚轮缩放 · 可播放最终动作序列。固定位置（起点/终点）+ 固定数量（节点）+ 不固定（动作）：碰撞不插节点，而是<b>加动作</b>；再反复截肢把路径压短——这一轮轮的截肢就是"动作的学习"。</p><p class="sub"></p>
+  <div class="row">
+    <div>
+      <canvas id="cv"></canvas>
+      <div style="margin-top:10px">
+        <button id="play">▶ 播放最终动作</button>
+        <button id="btnBefore">截肢前</button>
+        <button id="btnAfter" class="on">截肢后</button>
+        <button id="scStraight">直线可达</button>
+        <button id="scBlocked" class="on">被挡场景（Bacl）</button>
+        <button id="reset">重置视角</button>
+      </div>
+      <input type="range" id="scrub" min="0" max="159" value="0">
+      <div class="hint" id="status">拖拽旋转；滚轮缩放</div>
+    </div>
+    <div class="panel">
+      <h2>状态</h2>
+      <div class="stat"><span>节点数</span><b id="sNodes">—</b></div>
+      <div class="stat"><span>路径长度</span><b id="sLen">—</b></div>
+      <div class="stat"><span>动作数</span><b id="sActs">—</b></div>
+      <div class="stat"><span>直线距离</span><b id="sLine">—</b></div>
+      <div class="stat"><span>相对直线</span><b id="sRatio">—</b></div>
+      <div class="stat"><span>最大关节增量</span><b id="sJump">—</b></div>
+      <div class="stat"><span>当前帧</span><b id="sFrame">—</b></div>
+      <h2 style="margin-top:14px">最终动作表</h2>
+      <table id="tbl"><thead id="tblHead"><tr><th>段</th><th>位置 t</th><th>宽度</th><th>方向 d</th></tr></thead><tbody></tbody></table>
+      <div class="hint">动作 = 在段的 t 处叠加高斯脉冲，改变“怎么走”，不改变节点。</div>
+    </div>
+  </div>
+</div>
+<script>
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+let D = null, mode = 'after', frame = 0, playing = false, lastT = 0;
+let yaw = -0.9, pitch = 0.35, dist = 6.0, target = [1.2, 0, 1.4];
+
+function resize(){
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  cv.width = r.width * dpr; cv.height = r.height * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+
+function project(p){
+  // 世界 → 相机
+  let x = p[0] - target[0], y = p[1] - target[1], z = p[2] - target[2];
+  const cy = Math.cos(yaw), sy = Math.sin(yaw);
+  let x1 = cy * x - sy * y, y1 = sy * x + cy * y;
+  const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  let y2 = cp * y1 - sp * z, z2 = sp * y1 + cp * z;
+  z2 += dist;
+  const f = 900 / Math.max(0.2, z2);
+  const W = cv.clientWidth, H = cv.clientHeight;
+  return [W/2 + x1 * f, H/2 - y2 * f, z2];
+}
+
+function line(a, b, color, w=2, dash=null){
+  const A = project(a), B = project(b);
+  ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = w;
+  if (dash) ctx.setLineDash(dash);
+  ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke(); ctx.restore();
+}
+function dot(p, color, r=4){
+  const P = project(p);
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(P[0], P[1], r, 0, 7); ctx.fill();
+}
+function sphere(c, r, color){
+  const P = project(c);
+  const P2 = project([c[0] + r, c[1], c[2]]);
+  const rad = Math.abs(P2[0] - P[0]) || 6;
+  const g = ctx.createRadialGradient(P[0]-rad*0.3, P[1]-rad*0.3, rad*0.1, P[0], P[1], rad);
+  g.addColorStop(0, 'rgba(160,175,200,.55)'); g.addColorStop(1, 'rgba(90,105,130,.18)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(P[0], P[1], rad, 0, 7); ctx.fill();
+  ctx.strokeStyle = 'rgba(148,163,184,.45)'; ctx.lineWidth = 1; ctx.stroke();
+}
+
+function nearObstacle(p){
+  return D.obstacles.some(o => {
+    const d = Math.hypot(p[0]-o.c[0], p[1]-o.c[1], p[2]-o.c[2]);
+    return d < o.r + 0.05;
+  });
+}
+
+function fk(q){
+  // 与后端同一套正运动学（6 关节链）
+  const L = [1.0,1.0,1.0,1.0,1.0,0.4];
+  function mul(A,B){const C=[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+    for(let i=0;i<4;i++)for(let j=0;j<4;j++)for(let k=0;k<4;k++)C[i][j]+=A[i][k]*B[k][j];return C;}
+  function trotz(t){const c=Math.cos(t),s=Math.sin(t);return [[c,-s,0,0],[s,c,0,0],[0,0,1,0],[0,0,0,1]];}
+  function troty(t){const c=Math.cos(t),s=Math.sin(t);return [[c,0,s,0],[0,1,0,0],[-s,0,c,0],[0,0,0,1]];}
+  function trans(x,y,z){return [[1,0,0,x],[0,1,0,y],[0,0,1,z],[0,0,0,1]];}
+  let T = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]];
+  const pts = [[T[0][3],T[1][3],T[2][3]]];
+  T = mul(T, mul(trotz(q[0]), trans(0,0,L[0]))); pts.push([T[0][3],T[1][3],T[2][3]]);
+  T = mul(T, mul(troty(q[1]), trans(L[1],0,0))); pts.push([T[0][3],T[1][3],T[2][3]]);
+  T = mul(T, mul(troty(q[2]), trans(L[2],0,0))); pts.push([T[0][3],T[1][3],T[2][3]]);
+  T = mul(T, mul(trotz(q[3]), trans(0,0,L[3]))); pts.push([T[0][3],T[1][3],T[2][3]]);
+  T = mul(T, mul(troty(q[4]), trans(L[4],0,0))); pts.push([T[0][3],T[1][3],T[2][3]]);
+  T = mul(T, mul(trotz(q[5]), trans(L[5],0,0))); pts.push([T[0][3],T[1][3],T[2][3]]);
+  return pts;
+}
+
+function draw(){
+  const W = cv.clientWidth, H = cv.clientHeight;
+  ctx.clearRect(0, 0, W, H);
+  if (!D) return;
+  // 地面网格
+  for (let i = -2; i <= 4; i++){
+    line([i, -2, 0], [i, 2.2, 0], 'rgba(60,72,92,.35)', 1);
+    line([-2, i*0.8, 0], [4, i*0.8, 0], 'rgba(60,72,92,.35)', 1);
+  }
+  // 障碍
+  D.obstacles.forEach(o => sphere(o.c, o.r, null));
+  const cur = D[mode];
+  // 轨迹
+  cur.segs_traj.forEach(seg => {
+    for (let i = 0; i < seg.length - 1; i++)
+      line(seg[i], seg[i+1], mode === 'after' ? '#22c55e' : '#ef4444', 2.4);
+  });
+  // 节点
+  cur.nodes.forEach(q => {
+    const pts = fk(q); dot(pts[6], '#3b82f6', 4.5);
+  });
+  // 碰撞标记（学习前）
+  if (mode === 'before' && D.before.collide) {
+    cur.segs_traj.forEach(seg => {
+      for (let i = 0; i < seg.length - 1; i += 2) {
+        if (nearObstacle(seg[i])) {
+          const P = project(seg[i]);
+          ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(P[0]-4, P[1]-4); ctx.lineTo(P[0]+4, P[1]+4);
+          ctx.moveTo(P[0]+4, P[1]-4); ctx.lineTo(P[0]-4, P[1]+4); ctx.stroke();
+        }
+      }
+    });
+  }
+  // 起点终点
+  dot(D.start_ee, '#f59e0b', 6);
+  dot(D.goal_ee, '#ef4444', 7);
+  // 当前帧的机械臂（播放时）
+  if (mode === 'after' && D.poses.length){
+    const pts = fk(D.poses[frame]);
+    for (let i = 0; i < pts.length - 1; i++) line(pts[i], pts[i+1], '#f59e0b', 4.5);
+    for (let i = 0; i < pts.length - 1; i++) dot(pts[i], '#b45309', 3);
+    // 已走过的轨迹高亮
+    const ee = D.ee_frames;
+    for (let i = 0; i < Math.min(frame, ee.length-1); i++) line(ee[i], ee[i+1], '#86efac', 3.2);
+    dot(ee[frame], '#16a34a', 5);
+  }
+  // 文字
+  ctx.fillStyle = '#8b95a9'; ctx.font = '12px sans-serif';
+  ctx.fillText(`拖拽旋转 · 滚轮缩放　|　${D.scene || ''}　|　${mode === 'after' ? '学习后' : '学习前'}　|　帧 ${frame+1}/${D.poses.length}`, 12, 20);
+}
+
+function tick(t){
+  if (playing){
+    if (t - lastT > 55){
+      frame = (frame + 1) % D.poses.length;
+      document.getElementById('scrub').value = frame;
+      document.getElementById('sFrame').textContent = `${frame+1}/${D.poses.length}`;
+      lastT = t;
+    }
+    draw();
+  }
+  requestAnimationFrame(tick);
+}
+
+// 交互
+let dragging = false, last = null;
+cv.addEventListener('mousedown', e => { dragging = true; last = [e.clientX, e.clientY]; cv.classList.add('drag'); });
+window.addEventListener('mouseup', () => { dragging = false; cv.classList.remove('drag'); });
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  yaw += (e.clientX - last[0]) * 0.008;
+  pitch += (e.clientY - last[1]) * 0.006;
+  pitch = Math.max(-1.4, Math.min(1.4, pitch));
+  last = [e.clientX, e.clientY];
+  draw();
+});
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  dist = Math.max(2.5, Math.min(14, dist + Math.sign(e.deltaY) * 0.45));
+  draw();
+}, {passive:false});
+
+document.getElementById('play').addEventListener('click', e => {
+  playing = !playing;
+  e.target.textContent = playing ? '⏸ 暂停' : '▶ 播放最终动作';
+  e.target.classList.toggle('on', playing);
+});
+document.getElementById('btnBefore').addEventListener('click', () => {
+  mode = 'before'; document.getElementById('btnBefore').classList.add('on');
+  document.getElementById('btnAfter').classList.remove('on'); updateStats(); draw();
+});
+document.getElementById('btnAfter').addEventListener('click', () => {
+  mode = 'after'; document.getElementById('btnAfter').classList.add('on');
+  document.getElementById('btnBefore').classList.remove('on'); updateStats(); draw();
+});
+document.getElementById('reset').addEventListener('click', () => {
+  yaw = -0.9; pitch = 0.35; dist = 6.0; draw();
+});
+document.getElementById('scStraight').addEventListener('click', () => switchScene('straight'));
+document.getElementById('scBlocked').addEventListener('click', () => switchScene('blocked'));
+document.getElementById('scrub').addEventListener('input', e => {
+  frame = +e.target.value;
+  document.getElementById('sFrame').textContent = `${frame+1}/${D.poses.length}`;
+  draw();
+});
+
+function switchScene(k){
+  D = SCENES[k];
+  document.getElementById('scStraight').classList.toggle('on', k === 'straight');
+  document.getElementById('scBlocked').classList.toggle('on', k === 'blocked');
+  frame = 0; playing = false;
+  document.getElementById('play').textContent = '▶ 播放最终动作';
+  document.getElementById('play').classList.remove('on');
+  document.getElementById('scrub').max = D.poses.length - 1;
+  document.getElementById('scrub').value = 0;
+  updateStats(); draw();
+}
+
+function updateStats(){
+  const cur = D[mode];
+  document.getElementById('sNodes').textContent = cur.nodes.length;
+  document.getElementById('sLen').textContent = cur.length.toFixed(3) + ' m';
+  document.getElementById('sActs').textContent = cur.actions.length;
+  document.getElementById('sLine').textContent = (D.straight || 0).toFixed(3) + ' m';
+  document.getElementById('sJump').textContent =
+    (D.max_joint_step !== undefined ? D.max_joint_step.toFixed(4) + ' rad' : '—');
+  document.getElementById('sRatio').textContent =
+    (D.straight ? (cur.length / D.straight).toFixed(2) : '—') + ' 倍';
+  document.getElementById('sFrame').textContent = `${frame+1}/${D.poses.length}`;
+  const tb = document.querySelector('#tbl tbody');
+  tb.innerHTML = '';
+  cur.actions.forEach((a, i) => {
+    const tr = document.createElement('tr');
+    const d = a.d.map(v => v.toFixed(2)).join(', ');
+    tr.innerHTML = `<td>${a.seg+1}</td><td>${a.t.toFixed(2)}</td><td>${a.w.toFixed(2)}</td><td style="font-size:11px">[${d}]</td>`;
+    tb.appendChild(tr);
+  });
+  if (!D.learned_policy) head.style.display = '';
+  if (!cur.actions.length && !D.learned_policy) {
+    tb.innerHTML = '<tr><td colspan="4" style="color:#8b95a9">（无动作）</td></tr>';
+  }
+  const head = document.getElementById('tblHead');
+  if (D.learned_policy) {
+    head.style.display = 'none';
+    tb.innerHTML = '<tr><th style="color:#8b95a9">状态</th><th style="color:#8b95a9">学到的动作</th><th style="color:#8b95a9">Q</th></tr>'
+      + D.learned_policy.map(r =>
+        `<tr><td style="font-size:11px">${r.state}</td><td>${r.action}</td><td>${r.q.toFixed(1)}</td></tr>`
+      ).join('');
+  }
+}
+
+const SCENES = {straight: null, blocked: null};
+Promise.all([
+  fetch('solve.json').then(r => r.json()),
+  fetch('bacl_solve.json').then(r => r.json())
+]).then(([ds, db]) => {
+  SCENES.straight = ds; SCENES.blocked = db;
+  D = db;
+  document.getElementById('scrub').max = D.poses.length - 1;
+  resize(); updateStats(); draw(); requestAnimationFrame(tick);
+});
+</script>
+</body>
+</html>
