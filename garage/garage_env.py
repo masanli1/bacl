@@ -22,7 +22,8 @@ SLOT_BACK = AISLE_Y + SLOT_DEPTH
 TARGET = 4
 TX0 = SLOT_X0 + (TARGET - 1) * (SLOT_W + SLOT_DIV)
 TX1 = TX0 + SLOT_W
-GOAL = np.array([(TX0 + TX1) / 2, SLOT_BACK - 0.30 - REAR_OH, np.pi / 2])
+# 倒车入库：车头朝通道（-pi/2），车尾靠近后墙
+GOAL = np.array([(TX0 + TX1) / 2, SLOT_BACK - 0.30 - REAR_OH, -np.pi / 2])
 
 
 def wrap_pi(a):
