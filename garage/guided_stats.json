@@ -1,0 +1,7 @@
+{
+ "standard_ok": 34,
+ "standard_steps": 7.823529411764706,
+ "learned_ok": 9,
+ "learned_steps": 13.666666666666666,
+ "n": 40
+}
