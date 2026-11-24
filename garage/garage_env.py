@@ -37,8 +37,9 @@ class GarageEnv:
         ("后退左打", -1, +1.0), ("后退直行", -1, 0.0), ("后退右打", -1, -1.0),
     ]
 
-    def __init__(self, arc_len=1.6, max_steps=24, dt=0.02, seed=0):
+    def __init__(self, arc_len=1.6, max_steps=24, dt=0.02, seed=0, fine_dist=0.0, fine_arc=0.4):
         self.arc_len, self.max_steps, self.dt = arc_len, max_steps, dt
+        self.fine_dist, self.fine_arc = fine_dist, fine_arc
         self.rng = np.random.default_rng(seed)
         self.S = None
         self.steps = 0
@@ -98,11 +99,13 @@ class GarageEnv:
         name, direction, steer_frac = self.MANEUVERS[a_idx]
         steer = steer_frac * MAX_STEER
         v = (MAX_SPEED if direction > 0 else -MAX_REV)
+        # 动态弧长：离目标近时用短弧，保证入库精度
+        arc = self.fine_arc if self.dist_to_goal() < self.fine_dist else self.arc_len
         S = self.S.copy()
         travelled = 0.0
         d0 = self.dist_to_goal(S)
         a0 = abs(wrap_pi(S[2] - GOAL[2]))
-        while travelled < self.arc_len:
+        while travelled < arc:
             dmax = MAX_STEER * self.dt * 40.0 / 40.0
             S[3] = steer
             S[2] = wrap_pi(S[2] + (v / WB) * np.tan(S[3]) * self.dt)
