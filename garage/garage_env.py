@@ -40,6 +40,7 @@ class GarageEnv:
     def __init__(self, arc_len=1.6, max_steps=24, dt=0.02, seed=0, fine_dist=0.0, fine_arc=0.4):
         self.arc_len, self.max_steps, self.dt = arc_len, max_steps, dt
         self.fine_dist, self.fine_arc = fine_dist, fine_arc
+        self.margin = 0.06
         self.rng = np.random.default_rng(seed)
         self.S = None
         self.steps = 0
@@ -112,7 +113,7 @@ class GarageEnv:
             S[0] += v * np.cos(S[2]) * self.dt
             S[1] += v * np.sin(S[2]) * self.dt
             travelled += abs(v) * self.dt
-            if not self.in_free(S):
+            if not self.in_free(S, margin=self.margin):
                 self.steps += 1
                 info = {"collision": True, "dist": self.dist_to_goal(S), "name": name}
                 self.S = S
